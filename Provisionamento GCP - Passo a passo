@@ -1,0 +1,455 @@
+GCP
+
+
+- Instale o Cloud SDK e siga os passos de criação de um projeto
+
+    Atribua o nome "viggio" para o project ID (pode utilizar outro nomes, mas em algumns passos terá que alterar comandos e arquivos)
+
+    https://cloud.google.com/sdk/docs/quickstarts
+
+
+    NOTA: a região us-central1 é mais barata
+
+
+- Ative os serviços de API:
+
+    Acesse https://console.cloud.google.com/apis/library e pesquise os serviços
+
+    Kubernetes Engine API
+
+    Compute Engine API
+
+
+- Crie um cluster pelo painel de controle do GCP
+
+    Atribua o nome viggio-cluster (pode utilizar outro nome)
+
+    https://console.cloud.google.com/kubernetes/list
+
+
+- Instale o kubectl
+
+    Primeiro tente através do Google Cloud SDK
+    https://kubernetes.io/docs/tasks/tools/install-kubectl/#download-as-part-of-the-google-cloud-sdk
+
+    Se não rolar tente algum dos outros métodos de istalação
+    https://kubernetes.io/docs/tasks/tools/install-kubectl/
+
+
+- Configure o kubectl para trabalhar com o cluster
+
+    $ gcloud container clusters get-credentials <cluster_name> --zone <zone_of_your_cluster>
+
+    Exemplo:
+    $ gcloud container clusters get-credentials viggio-cluster --zone us-central1-a
+    >> Fetching cluster endpoint and auth data.
+    >> kubeconfig entry generated for viggio-cluster.
+
+    Dúvidas? --> https://cloud.google.com/kubernetes-engine/docs/how-to/cluster-access-for-kubectl
+
+
+- Crie um namespace
+
+    $ kubectl create namespace <name>
+
+    Exemplo:
+    $ kubectl create namespace production
+    >> namespace/production created
+
+
+- Configure o kubectl para executar comandos por padrão no namespace criado
+
+    Anote o contexto atual
+
+        $ kubectl config current-context
+        >> gke_viggio-sandbox_us-central1-a_viggio-cluster
+
+    Aplique o namespace ao contexto
+
+        $ kubectl config set-context gke_viggio-sandbox_us-central1-a_viggio-cluster --namespace=production
+        Context "gke_viggio_southamerica-east1-a_viggio-cluster" modified.
+
+- Instale e configure o Helm e o Tiller (necessários para instalar o nginx-ingress e certmanager)
+
+    - Instale o Helm
+    https://helm.sh/docs/using_helm/#installing-helm
+
+    - Execute os comandos:
+
+        $ kubectl create serviceaccount --namespace kube-system tiller
+        >> serviceaccount/tiller created
+
+        $ kubectl create clusterrolebinding tiller-cluster-rule --clusterrole=cluster-admin --serviceaccount=kube-system:tiller
+        >> clusterrolebinding.rbac.authorization.k8s.io/tiller-cluster-rule created
+
+        $ helm init --service-account tiller
+        >> $HELM_HOME has been configured at /home/michel/.helm.
+        >> Tiller (the Helm server-side component) has been installed into your Kubernetes Cluster.
+        >> Please note: by default, Tiller is deployed with an insecure 'allow unauthenticated users' policy.
+        >> To prevent this, run `helm init` with the --tiller-tls-verify flag.
+        >> For more information on securing your installation see: https://docs.helm.sh/using_helm/#securing-your-helm-installation
+
+        TODO: Usar TLS
+
+        $ kubectl patch deploy --namespace kube-system tiller-deploy -p '{"spec":{"template":{"spec":{"serviceAccount":"tiller"}}}}'
+        >> deployment.extensions/tiller-deploy patched
+
+        $ helm init --service-account tiller --upgrade
+        >> $HELM_HOME has been configured at /home/michel/.helm.
+        >> Tiller (the Helm server-side component) has been upgraded to the current version.
+
+
+- Crie uma instância do Cloud SQL:
+
+    Acesse https://console.cloud.google.com/sql/instances e clique em Escolha o Postgresql
+
+    Crie um instância chamada "viggio-postgresql"
+    Se optar por gerar uma senha, atualize "django-env-configmap.yaml"
+
+    Em Labels aplique "key == env", "value == prod"
+
+    NOTA: a região us-central1 é mais barata
+
+    Acesse https://console.cloud.google.com/sql/instances/viggio-postgresql/databases e crie um banco de dados chamado "viggio_data"
+    Se optar por outro nome, atualize "django-env-configmap.yaml"
+
+
+- Crie uma conta de serviço para o Cloud SQL:
+
+    Acesse https://console.cloud.google.com/projectselector2/iam-admin/serviceaccounts selecione o seu projeto e crie uma conta de serviço clicando em "+Criar conta de serviço"
+
+    Na segunda estapa, em "Permissões da conta de serviço" crie um papel para essa conta, busque o termo "sql" e adicione a conta de "Administrador do Cloud SQL"
+
+    Na terceira etapa, crie uma chave do tipo JSON e faça o download dela para a pasta /kubernetes/django/
+
+
+- Ative o Cloud SQL Admin API:
+
+    console.cloud.google.com/apis/library/sqladmin.googleapis.com
+
+
+- Abra o arquvio /kubernetes/django/django-deployment.yaml:
+
+    Atulize a chave "command" do container "cloudsql-proxy" para usar o project ID, Region e a chave JSON
+
+    command: ["/cloud_sql_proxy", "--dir=/cloudsql",
+              "-instances=<PROJECT-ID>:<REGION>:viggio-postgresql=tcp:5432",
+              "-credential_file=/secrets/cloudsql/<ATUALIZE-AQUI-COM-O-NOME-DA-CHAVE>.json"]
+
+    Exemplo:
+        command: ["/cloud_sql_proxy", "--dir=/cloudsql",
+                  "-instances=viggio-sandbox:us-central1:viggio-postgresql=tcp:5432",
+                  "-credential_file=/secrets/cloudsql/viggio-sandbox-sql-proxy-7d3a5e37d7e7.json"]
+
+
+    Nota: acesse https://console.cloud.google.com/sql/instances/ e clique na instancia, na aba "Visão geral", no box "Conectar a esta instância", copie  valor do campo "Nome da conexão da instância" e use como argumento para "-instances"
+
+
+- Crie um Secret para armazenar a chave da conta de serviço do Cloud SQL:
+
+    $ kubectl create secret generic cloudsql-oauth-credentials --from-file=<your-downloaded-key>.json
+
+    Exemplo:
+        $ kubectl create secret generic cloudsql-oauth-credentials --from-file=<your-downloaded-key>.json
+        >> secret/cloudsql-oauth-credentials created
+
+
+- Crie uma imagem do Cloud SQL Proxy e envie para o Container Registry:
+
+    Autorize o docker enviar imagens para o Container Registry
+
+        $ gcloud auth configure-docker
+
+    Navegue até /kubernetes/django/ e execute os comandos:
+
+        $ docker build -t us.gcr.io/<project-id>/proxy-db:<release> .
+        $ docker push us.gcr.io/<project-id>/proxy-db:<release>
+
+        Exemplo:
+            $ docker build -t us.gcr.io/viggio-sandbox/proxy-db:1.16 .
+            $ docker push us.gcr.io/viggio-sandbox/proxy-db:1.16
+
+        *1.16 é a versão do Cloud Sql Proxy, atualize o django/Dockerfile se necessário
+        https://github.com/GoogleCloudPlatform/cloudsql-proxy/releases
+
+        Dúvidas?
+            --> https://cloud.google.com/container-registry/docs/pushing-and-pulling
+            --> https://cloud.google.com/sql/docs/postgres/connect-docker
+
+        Se você criou o projeto com um project ID diferente, atualize o campo "images" do container "cloudsql-proxy" no arquivo django-deployment.yaml e celery-deployment.yaml
+
+
+- Crie um storage para armazenar os estáticos e arquivos de media
+
+    Acesse https://console.cloud.google.com/storage/browser e clique em "Criar Intervalo"
+
+    Crie um intervalo com o nome "viggio-storage" e com a opção de controle de acesso "Definir permissões no nível do objeto e no nível do intervalo"
+
+
+- Na aba Objetos, crie 4 pastas no storage: avatar, media, static, talents
+
+    https://console.cloud.google.com/storage/browser/viggio-storage
+
+
+- Na aba Permissões, clique em adicionar membros
+
+    Digite allUsers e adicione o papel Visualizador de objetos do Storage
+
+    https://console.cloud.google.com/storage/browser/viggio-files-storage
+
+
+- Crie uma conta de serviço para o Storage:
+
+    Acesse https://console.cloud.google.com/projectselector2/iam-admin/serviceaccounts selecione o seu projeto e crie uma conta de serviço clicando em "+Criar conta de serviço"
+
+    Na segunda estapa, em "Permissões da conta de serviço" crie um papel para essa conta, busque o termo "storage" e adicione a conta de "Administrador do Storage"
+
+    Na terceira etapa, crie uma chave do tipo JSON e faça o download dela para a pasta /kubernetes/django/
+
+
+- Crie um Secret para armazenar a chave da conta de serviço do Storage:
+
+    $ kubectl create secret generic storage-credentials --from-file=<your-downloaded-key>.json
+
+    Exemplo:
+        $ kubectl create secret generic storage-credentials --from-file=<your-downloaded-key>.json
+        >> secret/storage-credentials created
+
+    Atulize o arquivo django-env-configmap.yaml
+
+        storage.google_application_credentials: /classified/storage/<your-downloaded-key>.json
+
+- Navegue até /viggio-backend/ e execute o script build_and_push_production_image.sh
+
+    $ ./build_and_push_production_image.sh
+
+    Verifique se seu project ID coincide com o que está no script, se necessário altere a tag da imagem gerada na linha de "build" e "push"
+
+        us.gcr.io/<PROJECT-ID>/viggio-backend:latest
+
+    Atualize também o campo "images" do container "django" no arquivo django-deployment.yaml e "celery-worker" em celery-deployment.yaml
+
+
+- Navegue até /viggio-front/ e execute o script build_and_push_production_image.sh
+
+    $ ./build_and_push_production_image.sh
+
+    Verifique se seu project ID coincide com o que está no script, se necessário altere a tag da imagem gerada na linha de "build" e "push"
+
+        us.gcr.io/<PROJECT-ID>/viggio-frontend:latest
+
+    Atualize também o campo "images" do container "frontend" no arquivo frontend-deployment.yaml
+
+
+
+- Navegue até /kubernetes/ e execute o script apply_cluster_manifests.sh
+
+    Na primeira vez altere a linha
+
+        OUTPUT=$(helm install nginx-ingress nginx/nginx-ingress --set rbac.create=true --set controller.publishService.enabled=true)
+
+    adicionando o argumento --set controller.service.loadBalancerIP="<IP do nginx-ingress>"
+
+    Execute o script
+
+    $ ./apply_cluster_manifests.sh
+    >> persistentvolumeclaim/redis-data created
+    >> deployment.extensions/redis-server created
+    >> service/redis-server created
+    >> deployment.extensions/frontend created
+    >> service/frontend created
+    >> configmap/django-env created
+    >> deployment.extensions/api-backend created
+    >> service/api-backend created
+    >> deployment.extensions/celery-worker created
+    >> helm installed nginx-ingress
+    >> ingress.extensions/viggio-ingress created
+
+    Se for preciso rodar o script mais uma vez lembre-se de adicionar o argumento --set controller.service.loadBalancerIP="<ip_atribuído>" passando o valor da coluna EXTERNAL-IP
+
+    $kubectl get svc
+    NAME                      TYPE          CLUSTER-IP  EXTERNAL-IP    PORT(S)
+    nginx-ingress-controller  LoadBalancer  10.0.2.142  34.95.248.68   80:31943/TCP,443:30209/TCP
+
+
+    NOTA: se você tentar roda mais um vez o script sem passar o IP Público receberá um erro, pois o Google Cloud limita o número de IPs Públicos para 1. Quando o IP público não é fornecido um novo IP é solicitado e o Google verifica que já existe um ativo e se recusa a criar um novo
+
+
+
+-----------------------------------------------------------------------------------
+
+
+## HTTPS ##
+
+- Reservar o IP
+
+https://console.cloud.google.com/networking/addresses/list
+
+Selecionar o Tipo como Estático
+
+
+- Instalar cert-manager
+
+$ kubectl apply --validate=false -f https://raw.githubusercontent.com/jetstack/cert-manager/release-0.12/deploy/manifests/00-crds.yaml
+
+$ kubectl create namespace cert-manager
+
+$ helm repo add jetstack https://charts.jetstack.io
+
+$ helm repo update
+
+$ helm install cert-manager --namespace cert-manager --version v0.12.0 jetstack/cert-manager
+
+
+Fonte: http://docs.cert-manager.io/en/latest/getting-started/install/kubernetes.html#steps
+
+
+$ kubectl apply -f ingress/
+
+
+
+Obs: eu rodei esse comando mas não tenho certeza se fez alguma diferença, rodar somente se o manifestos YAML retornarem alguma erro quando forem aplicados
+
+$kubectl label namespace cert-manager certmanager.k8s.io/disable-validation=true
+
+
+Para verificar o status:
+
+$ kubectl describe ingress,certificate,certificaterequest,issuer,secret | less
+
+-----------------------------------------------------------------------------------
+
+Cloud build CI/CD
+
+
+https://cloud.google.com/kubernetes-engine/docs/tutorials/gitops-cloud-build?hl=pt-br
+
+
+:: Permitir Cloud build clonar e enviar push para o github
+
+Ativar KMS API
+
+Criar uma KeyRing
+
+$ gcloud kms keyrings create ci-cd-keyring --location=global
+
+
+Criar uma CryptoKey
+
+$ gcloud kms keys create github-key --location=global --keyring=ci-cd-keyring --purpose=encryption
+
+
+Criptografar sua chave SSH
+
+(se necesário, criar um diretório em repo do backend e frontend)
+$ mkdir .github_keys
+
+$ gcloud kms encrypt --plaintext-file=$HOME/.ssh/id_rsa --ciphertext-file=$HOME/viggio/viggio-backend/.github_keys/id_rsa.enc --location=global --keyring=ci-cd-keyring --key=github-key
+
+$ ssh-keyscan -t rsa github.com > $HOME/viggio/viggio-backend/.github_keys/known_hosts
+
+
+Fonte:
+https://cloud.google.com/cloud-build/docs/access-private-github-repos?hl=pt-br
+
+
+----------------------
+
+Conectar no banco via cloud_sql_proxy
+
+Iniciar o proxy:
+
+    $ ./cloud_sql_proxy -instances=viggio-sandbox:us-central1:viggio-postgresql=tcp:5432 -credential_file=<KEY>.json
+
+    Exemplo:
+
+    $ ./cloud_sql_proxy -instances=viggio-sandbox:us-central1:viggio-postgresql=tcp:5432 -credential_file=viggio-sandbox-sql-proxy-7d3a5e37d7e7.json
+
+    Se conectar com o psql:
+
+    $psql --host 127.0.0.1 --user postgres --password
+
+
+----------------------
+
+Descobrir quem está usando uma porta
+
+sudo lsof -i:{porta}
+
+-----------------------
+
+######## COMANDOS KUBECTL ÚTEIS #########
+
+
+- Listar pods
+
+    $ kubectl get pods OU kubectl get po
+
+
+- Ver os pods de todos os namespaces
+
+    $ kubectl get po -A
+
+
+- Lista outros recuros
+
+    $ kubectl get deployments
+
+    $ kubectl get services OU kubectl get svc
+
+    $ kubectl get secret
+
+    $ kubectl get pv
+
+
+- Acessar um container dentro de uma Pod
+
+    $ kubectl exec -it pod/<nome-do-pode> -c <nome-do-container> /bin/bash
+
+    Exemplo:
+
+    $ kubectl exec -it pod/api-backend-5bd694f486-g7v8v -c django /bin/bash
+
+
+- Visuazilar as saídas dentro de um recurso
+
+    Exemplo:
+
+    $ kubectl port-forward service/nginx-ingress-controller 9000:80
+
+    $ kubectl port-forward service/viggio-nginx-ingress-controller 9000:80
+
+
+
+
+kubectl get svc storage-proxy-name -o yaml
+
+kubectl get resource frontend-64d65697f8-pkdzx
+
+kubectl config get-contexts
+
+kubectl top pod
+
+kubectl top nodes
+
+
+kubectl get pods -o=jsonpath="{range .items[*]}{.metadata.namespace}:{.metadata.name}{'\n'}\ {'.spec.nodeName -'} {.spec.nodeName}{'\n'}\ {range .spec.containers[*]}\ {'requests.cpu -'} {.resources.requests.cpu}{'\n'}\ {'limits.cpu -'} {.resources.limits.cpu}{'\n'}\ {'requests.memory -'} {.resources.requests.memory}{'\n'}\ {'limits.memory -'} {.resources.limits.memory}{'\n'}\ {'\n'}{end}\ {'\n'}{end}"
+
+
+kubectl get pods -o custom-columns=NAME:.metadata.name,"CPU(cores)":.spec.containers[*].resources.requests.cpu,"MEMORY(bytes)":.spec.containers[*].resources.requests.memory --all-namespaces
+
+-----------------
+from celery.task.control import inspect
+i = inspect()
+
+# Show the items that have an ETA or are scheduled for later processing
+i.scheduled()
+
+# Show tasks that are currently active.
+i.active()
+
+# Show tasks that have been claimed by workers
+i.reserved()
+
+
+$ celery -A project_configuration events

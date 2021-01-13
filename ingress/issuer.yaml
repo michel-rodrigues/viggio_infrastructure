@@ -1,0 +1,17 @@
+apiVersion: cert-manager.io/v1alpha2
+kind: ClusterIssuer
+metadata:
+  name: viggio-issuer
+  namespace: production
+spec:
+  acme:
+    http01: {}
+    email: "michel@viggio.com.br"
+    privateKeySecretRef:
+      name: viggio-issuer-private-key
+    server: https://acme-v02.api.letsencrypt.org/directory
+    solvers:
+    - http01:
+        ingress:
+          class: nginx
+      selector: {}

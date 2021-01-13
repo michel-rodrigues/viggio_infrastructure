@@ -1,0 +1,243 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-backend
+  namespace: production
+spec:
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: api-backend
+  template:
+    metadata:
+      labels:
+        app: api-backend
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: beta.kubernetes.io/instance-type
+                operator: In
+                values:
+                - "n1-standard-2"
+      containers:
+      - name: django
+        image: us.gcr.io/GOOGLE_CLOUD_PROJECT/viggio-backend:COMMIT_SHA
+        command: ["/bin/sh", "-c"]
+        args:
+          - python manage.py migrate;
+            python manage.py collectstatic --no-input --clear;
+            gunicorn project_configuration.wsgi:application -c gunicorn.config.py;
+        ports:
+        - containerPort: 8000
+        volumeMounts:
+          - name: storage-credentials
+            mountPath: /classified/storage
+            readOnly: true
+        resources:
+          requests:
+            cpu: "180m"
+            memory: "250Mi"
+          limits:
+            cpu: "300m"
+            memory: "700Mi"
+        env:
+          - name: ENVIRONMENT
+            valueFrom:
+              configMapKeyRef:
+                key: app.environment
+                name: django-env
+          - name: DEBUG
+            valueFrom:
+              configMapKeyRef:
+                key: app.debug
+                name: django-env
+          - name: SECRET_KEY
+            valueFrom:
+              configMapKeyRef:
+                key: app.secret_key
+                name: django-env
+          - name: SITE_URL
+            valueFrom:
+              configMapKeyRef:
+                key: app.site_url
+                name: django-env
+          - name: CONTACT_EMAIL
+            valueFrom:
+              configMapKeyRef:
+                key: app.contact_email
+                name: django-env
+          - name: STAFF_EMAIL
+            valueFrom:
+              configMapKeyRef:
+                key: app.staff_email
+                name: django-env
+          - name: DATABASE_ENGINE
+            valueFrom:
+              configMapKeyRef:
+                key: database.engine
+                name: django-env
+          - name: DATABASE_HOST
+            valueFrom:
+              configMapKeyRef:
+                key: database.host
+                name: django-env
+          - name: DATABASE_NAME
+            valueFrom:
+              configMapKeyRef:
+                key: database.name
+                name: django-env
+          - name: DATABASE_PASSWORD
+            valueFrom:
+              configMapKeyRef:
+                key: database.password
+                name: django-env
+          - name: DATABASE_PORT
+            valueFrom:
+              configMapKeyRef:
+                key: database.port
+                name: django-env
+          - name: DATABASE_USER
+            valueFrom:
+              configMapKeyRef:
+                key: database.user
+                name: django-env
+          - name: GOOGLE_APPLICATION_CREDENTIALS
+            valueFrom:
+              configMapKeyRef:
+                key: storage.google_application_credentials
+                name: django-env
+          - name: STORAGE_NAME
+            valueFrom:
+              configMapKeyRef:
+                key: storage.name
+                name: django-env
+          - name: STORAGE_URL
+            valueFrom:
+              configMapKeyRef:
+                key: storage.url
+                name: django-env
+          - name: MEDIA_DIRECTORY
+            valueFrom:
+              configMapKeyRef:
+                key: storage.media_directory
+                name: django-env
+          - name: STATIC_DIRECTORY
+            valueFrom:
+              configMapKeyRef:
+                key: storage.static_directory
+                name: django-env
+          - name: REDIS_HOST
+            valueFrom:
+              configMapKeyRef:
+                key: redis.host
+                name: django-env
+          - name: REDIS_PORT
+            valueFrom:
+              configMapKeyRef:
+                key: redis.port
+                name: django-env
+          - name: ACCESS_TOKEN_LIFETIME_DAYS
+            valueFrom:
+              configMapKeyRef:
+                key: jwt.access_token_lifetime_days
+                name: django-env
+          - name: REFRESH_TOKEN_LIFETIME_DAYS
+            valueFrom:
+              configMapKeyRef:
+                key: jwt.refresh_token_lifetime_days
+                name: django-env
+          - name: SENTRY_DSN
+            valueFrom:
+              configMapKeyRef:
+                key: sentry.dsn
+                name: django-env
+          - name: MAILGUN_API_URL
+            valueFrom:
+              configMapKeyRef:
+                key: mailgun.api_url
+                name: django-env
+          - name: MAILGUN_API_KEY
+            valueFrom:
+              configMapKeyRef:
+                key: mailgun.api_key
+                name: django-env
+          - name: WIRECARD_TOKEN
+            valueFrom:
+              configMapKeyRef:
+                key: wirecard.token
+                name: django-env
+          - name: WIRECARD_API_KEY
+            valueFrom:
+              configMapKeyRef:
+                key: wirecard.api_key
+                name: django-env
+          - name: WIRECARD_PAYMENT_WEBHOOK_TOKEN
+            valueFrom:
+              configMapKeyRef:
+                key: wirecard.payment_webhook_token
+                name: django-env
+          - name: WIRECARD_CREATE_ORDER_URL
+            valueFrom:
+              configMapKeyRef:
+                key: wirecard.create_order_url
+                name: django-env
+          - name: WIRECARD_CREATE_PAYMENT_URL
+            valueFrom:
+              configMapKeyRef:
+                key: wirecard.create_payment_url
+                name: django-env
+          - name: WIRECARD_CAPTURE_PAYMENT_URL
+            valueFrom:
+              configMapKeyRef:
+                key: wirecard.capture_payment_url
+                name: django-env
+          - name: TELEGRAM_BOT_TOKEN
+            valueFrom:
+              configMapKeyRef:
+                key: telegram.bot_token
+                name: django-env
+          - name: TELEGRAM_GROUP_ID
+            valueFrom:
+              configMapKeyRef:
+                key: telegram.group_id
+                name: django-env
+      - name: cloudsql-proxy
+        image: us.gcr.io/GOOGLE_CLOUD_PROJECT/proxy-db:1.16
+        resources:
+          requests:
+            cpu: "25m"
+            memory: "15Mi"
+          limits:
+            cpu: "70m"
+            memory: "50Mi"
+        command: ["/cloud_sql_proxy", "--dir=/cloudsql",
+                  "-instances=GOOGLE_CLOUD_PROJECT:us-central1:viggio-postgresql=tcp:5432",
+                  "-credential_file=/secrets/cloudsql/GOOGLE_CLOUD_PROJECT-sql-proxy-d5a13704d1fe.json"]
+        volumeMounts:
+          - name: cloudsql-oauth-credentials
+            mountPath: /secrets/cloudsql
+            readOnly: true
+          - name: ssl-certs
+            mountPath: /etc/ssl/certs
+          - name: cloudsql
+            mountPath: /cloudsql
+      volumes:
+        - name: cloudsql-oauth-credentials
+          secret:
+            secretName: cloudsql-oauth-credentials
+        - name: ssl-certs
+          hostPath:
+            path: /etc/ssl/certs
+        - name: cloudsql
+          emptyDir:
+        - name: storage-credentials
+          secret:
+            secretName: storage-credentials
+      restartPolicy: Always

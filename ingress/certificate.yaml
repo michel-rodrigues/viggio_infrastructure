@@ -1,0 +1,23 @@
+apiVersion: cert-manager.io/v1alpha2
+kind: Certificate
+metadata:
+  name: viggio-certificate
+  namespace: production
+spec:
+  secretName: viggio-certificate-secret
+  duration: 24h
+  renewBefore: 12h
+  commonName: viggio.com.br
+  dnsNames:
+  - viggio.com.br
+  - www.viggio.com.br
+  issuerRef:
+    name: viggio-issuer
+    kind: ClusterIssuer
+  acme:
+    config:
+    - http01:
+        ingressClass: nginx
+      domains:
+      - viggio.com.br
+      - www.viggio.com.br

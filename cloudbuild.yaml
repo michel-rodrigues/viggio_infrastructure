@@ -1,0 +1,125 @@
+# The PROJECT_ID and SHORT_SHA variables are automatically replaced by Cloud Build.
+steps:
+  # [START GITHUB SETUP]
+  - id: Decrypting GitHub RSA Key
+    name: 'gcr.io/cloud-builders/gcloud'
+    args:
+    - kms
+    - decrypt
+    - --ciphertext-file=.github_keys/id_rsa.enc
+    - --plaintext-file=/root/.ssh/id_rsa
+    - --location=global
+    - --keyring=ci-cd-keyring
+    - --key=github-key
+    volumes:
+    - name: 'ssh'
+      path: /root/.ssh
+
+  - id: Setting up git with key and domain.
+    name: 'gcr.io/cloud-builders/git'
+    entrypoint: 'bash'
+    args:
+    - '-c'
+    - |
+      chmod 600 /root/.ssh/id_rsa
+      mv .github_keys/config /root/.ssh/config
+      chmod 600 /root/.ssh/config
+      mv .github_keys/known_hosts /root/.ssh/known_hosts
+    volumes:
+    - name: 'ssh'
+      path: /root/.ssh
+  # [END GITHUB SETUP]
+
+  # [START CD]
+  - id: Applying django directory manifests
+    name: "gcr.io/cloud-builders/kubectl"
+    args:
+    - apply
+    - "-f"
+    - "django/"
+    env:
+    - 'CLOUDSDK_COMPUTE_ZONE=us-central1-a'
+    - 'CLOUDSDK_CONTAINER_CLUSTER=viggio-cluster'
+
+  - id: Applying celery directory manifests
+    name: "gcr.io/cloud-builders/kubectl"
+    args:
+    - apply
+    - "-f"
+    - "celery/"
+    env:
+    - 'CLOUDSDK_COMPUTE_ZONE=us-central1-a'
+    - 'CLOUDSDK_CONTAINER_CLUSTER=viggio-cluster'
+
+  - id: Applying frontend directory manifests
+    name: "gcr.io/cloud-builders/kubectl"
+    args:
+    - apply
+    - "-f"
+    - "frontend/"
+    env:
+    - 'CLOUDSDK_COMPUTE_ZONE=us-central1-a'
+    - 'CLOUDSDK_CONTAINER_CLUSTER=viggio-cluster'
+
+  - id: Applying redis directory manifests
+    name: "gcr.io/cloud-builders/kubectl"
+    args:
+    - apply
+    - "-f"
+    - "redis/"
+    env:
+    - 'CLOUDSDK_COMPUTE_ZONE=us-central1-a'
+    - 'CLOUDSDK_CONTAINER_CLUSTER=viggio-cluster'
+
+  - id: Applying ingress directory manifests
+    name: "gcr.io/cloud-builders/kubectl"
+    args:
+    - apply
+    - "-f"
+    - "ingress/"
+    env:
+    - 'CLOUDSDK_COMPUTE_ZONE=us-central1-a'
+    - 'CLOUDSDK_CONTAINER_CLUSTER=viggio-cluster'
+
+  - id: Cloning infra repository and checkout to branch production
+    name: "gcr.io/cloud-builders/git"
+    entrypoint: /bin/sh
+    args:
+    - "-c"
+    - |
+      set -x && \
+      git clone git@github.com:michel-rodrigues/kubernetes.git && \
+      cd kubernetes && \
+      git checkout production
+    volumes:
+    - name: 'ssh'
+      path: /root/.ssh
+
+  - id: Copying changed files from workspace to infra repository
+    name: 'gcr.io/cloud-builders/git'
+    entrypoint: /bin/sh
+    args:
+    - '-c'
+    - |
+      set -x && \
+      cp -var [^kubernetes]* kubernetes/
+
+  - id: Pushing changed files to production branch
+    name: 'gcr.io/cloud-builders/git'
+    entrypoint: /bin/sh
+    args:
+    - '-c'
+    - |
+      set -x && \
+      cd kubernetes && \
+      git config user.name Michel Rodrigues && \
+      git config user.email michel.rodrigues86@yahoo.com.br
+      git checkout production && \
+      git add . && \
+      git commit -m "Changes from commit $COMMIT_SHA
+      $(git log --format=%B -n 1 $COMMIT_SHA)" && \
+      git push origin production
+    volumes:
+    - name: 'ssh'
+      path: /root/.ssh
+  # [END CD]

@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: production
+spec:
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+            - matchExpressions:
+              - key: beta.kubernetes.io/instance-type
+                operator: In
+                values:
+                - "n1-standard-2"
+      containers:
+      - name: frontend
+        image: us.gcr.io/GOOGLE_CLOUD_PROJECT/viggio-frontend:COMMIT_SHA
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            cpu: "25m"
+            memory: "50Mi"
+          limits:
+            cpu: "50m"
+            memory: "100Mi"
