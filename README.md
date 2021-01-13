@@ -4,4 +4,4 @@ Viggio was a project strongly based on cameo.com, a platform where you can buy a
 
 This repository contains the files used to provision a backend application written in Python and the infrastructure to serve static files from the front end. The backend project can be found in this repository: https://github.com/michel-rodrigues/viggio_backend
 
-[This repository is a copy of the private repository because some sensitive information was commited before being extracted to environment variables and configuration files]
+[*This repository is a copy of the private repository because some sensitive information was commited before being extracted to environment variables and configuration files*]
